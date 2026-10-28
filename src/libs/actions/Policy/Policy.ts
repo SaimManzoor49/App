@@ -110,6 +110,7 @@ import {
     isControlPolicy,
     navigateToExpensifyCardPage,
 } from '@libs/PolicyUtils';
+import {getDuplicateWorkspaceFeatureState, getValidDuplicateWorkspaceParts} from '@libs/PolicyUtils/duplicateFeatures';
 import * as ReportUtils from '@libs/ReportUtils';
 import {isApprovalWorkflowRule} from '@libs/RuleUtils';
 import {getNegatedAmountTransaction} from '@libs/TransactionUtils';
@@ -3451,7 +3452,12 @@ function createDraftWorkspace({
 
 function buildOptimisticDuplicatePolicy(
     sourcePolicy: Policy,
-    policyOptions: DuplicatePolicyDataOptions & {distanceCustomUnitID: string; perDiemCustomUnitID: string; customUnitRateID: string},
+    policyOptions: DuplicatePolicyDataOptions & {
+        distanceCustomUnitID: string;
+        perDiemCustomUnitID: string;
+        customUnitRateID: string;
+        featureState: ReturnType<typeof getDuplicateWorkspaceFeatureState>;
+    },
 ) {
     const {
         policyName: duplicatedPolicyName = '',
@@ -3462,21 +3468,17 @@ function buildOptimisticDuplicatePolicy(
         distanceCustomUnitID: duplicatedDistanceCustomUnitID,
         perDiemCustomUnitID: duplicatedPerDiemCustomUnitID,
         customUnitRateID: duplicatedCustomUnitRateID,
+        featureState,
     } = policyOptions;
 
     const isMemberFeatureSelected = duplicatedParts?.people;
     const isReportsFeatureSelected = duplicatedParts?.reports;
-    const isConnectionsFeatureSelected = duplicatedParts?.connections;
+    const isConnectionsFeatureSelected = featureState.areConnectionsEnabled;
     const isTaxesFeatureSelected = duplicatedParts?.taxes;
-    const isTagsFeatureSelected = duplicatedParts?.tags;
-    const isInvoicesFeatureSelected = duplicatedParts?.invoices;
     const isInvoiceFieldsFeatureSelected = duplicatedParts?.invoiceFields;
-    const isDistanceRatesFeatureSelected = duplicatedParts?.distance;
-    const isRulesFeatureSelected = duplicatedParts?.expenses;
-    const isWorkflowsFeatureSelected = duplicatedParts?.exportLayouts;
-    const isPerDiemFeatureSelected = duplicatedParts?.perDiem;
+    const isDistanceRatesFeatureSelected = featureState.areDistanceRatesEnabled;
+    const isPerDiemFeatureSelected = featureState.arePerDiemRatesEnabled;
     const isOverviewFeatureSelected = duplicatedParts?.overview;
-    const isTravelFeatureSelected = duplicatedParts?.travel;
     const duplicatedOutputCurrency = isOverviewFeatureSelected ? sourcePolicy?.outputCurrency : duplicatedLocalCurrency;
 
     const filterPendingDeleteData = <T>(data?: Record<string, T>): Record<string, T> | undefined =>
@@ -3504,7 +3506,16 @@ function buildOptimisticDuplicatePolicy(
         ...(isReportsFeatureSelected ? reportFieldListWithoutPendingDelete : undefined),
         ...(isInvoiceFieldsFeatureSelected ? invoiceFieldListWithoutPendingDelete : undefined),
     };
-    const connectionsWithoutPendingDelete = filterPendingDeleteData(sourcePolicy?.connections);
+    const connectionsWithoutPendingDelete = filterPendingDeleteData(
+        sourcePolicy.connections
+            ? Object.fromEntries(
+                  PolicyUtils.getAccountingConnectionNames().flatMap((connectionName) => {
+                      const connection = sourcePolicy.connections?.[connectionName];
+                      return connection ? [[connectionName, connection] as const] : [];
+                  }),
+              )
+            : undefined,
+    );
     const taxRatesWithoutPendingDelete = {
         ...sourcePolicy?.taxRates,
         taxes: filterPendingDeleteData(sourcePolicy?.taxRates?.taxes),
@@ -3512,21 +3523,10 @@ function buildOptimisticDuplicatePolicy(
 
     return {
         ...sourcePolicy,
-        areCategoriesEnabled: true,
-        areTagsEnabled: isTagsFeatureSelected,
-        areDistanceRatesEnabled: isDistanceRatesFeatureSelected,
-        areInvoicesEnabled: isInvoicesFeatureSelected,
-        areRulesEnabled: isRulesFeatureSelected,
-        areWorkflowsEnabled: isWorkflowsFeatureSelected,
-        areReportFieldsEnabled: isReportsFeatureSelected ? sourcePolicy?.areReportFieldsEnabled : false,
-        areInvoiceFieldsEnabled: isInvoiceFieldsFeatureSelected ? sourcePolicy?.areInvoiceFieldsEnabled : false,
-        areConnectionsEnabled: isConnectionsFeatureSelected,
-        arePerDiemRatesEnabled: isPerDiemFeatureSelected,
-        isTravelEnabled: isTravelFeatureSelected ? sourcePolicy?.isTravelEnabled : undefined,
+        ...featureState,
         travelSettings: undefined,
         invoice: undefined,
         policyAccountID: undefined,
-        tax: isTaxesFeatureSelected ? sourcePolicy?.tax : undefined,
         employeeList: isMemberFeatureSelected ? employeeListWithoutPendingDelete : {[sourcePolicy.owner]: sourcePolicy?.employeeList?.[sourcePolicy.owner]},
         id: duplicatedPolicyID,
         name: duplicatedPolicyName,
@@ -3570,7 +3570,7 @@ function buildDuplicatePolicyData(policy: Policy, options: DuplicatePolicyDataOp
         policyID = generatePolicyID(),
         file,
         welcomeNote,
-        parts,
+        parts: requestedParts,
         targetPolicyID = generatePolicyID(),
         policyCategories,
         localCurrency,
@@ -3579,6 +3579,9 @@ function buildDuplicatePolicyData(policy: Policy, options: DuplicatePolicyDataOp
         rules,
         personalDetailsByLogins,
     } = options;
+
+    const parts = getValidDuplicateWorkspaceParts(policy, requestedParts, policyCategories);
+    const featureState = getDuplicateWorkspaceFeatureState(policy, parts, policyCategories);
 
     const {
         adminsChatReportID,
@@ -3627,7 +3630,7 @@ function buildDuplicatePolicyData(policy: Policy, options: DuplicatePolicyDataOp
         {
             onyxMethod: Onyx.METHOD.SET,
             key: `${ONYXKEYS.COLLECTION.POLICY}${targetPolicyID}`,
-            value: buildOptimisticDuplicatePolicy(policy, {...options, targetPolicyID, distanceCustomUnitID, perDiemCustomUnitID, customUnitRateID}),
+            value: buildOptimisticDuplicatePolicy(policy, {...options, parts, targetPolicyID, distanceCustomUnitID, perDiemCustomUnitID, customUnitRateID, featureState}),
         },
         {
             onyxMethod: Onyx.METHOD.MERGE,
@@ -3706,6 +3709,7 @@ function buildDuplicatePolicyData(policy: Policy, options: DuplicatePolicyDataOp
             onyxMethod: Onyx.METHOD.MERGE,
             key: `${ONYXKEYS.COLLECTION.POLICY}${targetPolicyID}`,
             value: {
+                ...featureState,
                 pendingAction: null,
                 pendingFields: {
                     autoReporting: null,

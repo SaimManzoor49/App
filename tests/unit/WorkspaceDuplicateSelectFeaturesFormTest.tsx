@@ -90,11 +90,12 @@ function createSourcePolicy(hasWorkspaceRules: boolean): Policy {
         maxExpenseAmount: CONST.DISABLED_MAX_EXPENSE_VALUE,
         maxExpenseAge: CONST.DISABLED_MAX_EXPENSE_VALUE,
         eReceipts: hasWorkspaceRules,
+        areRulesEnabled: true,
     };
 }
 
-async function renderForm(hasWorkspaceRules: boolean) {
-    await Onyx.set(`${ONYXKEYS.COLLECTION.POLICY}${POLICY_ID}`, createSourcePolicy(hasWorkspaceRules));
+async function renderForm(hasWorkspaceRules: boolean, policyOverrides: Partial<Policy> = {}) {
+    await Onyx.set(`${ONYXKEYS.COLLECTION.POLICY}${POLICY_ID}`, {...createSourcePolicy(hasWorkspaceRules), ...policyOverrides});
     await Onyx.set(`${ONYXKEYS.COLLECTION.RULE}merchantRule`, MERCHANT_RULE);
     await Onyx.set(ONYXKEYS.RAM_ONLY_HAS_RULES_DATA_BEEN_FETCHED, true);
     await Onyx.set(ONYXKEYS.DUPLICATE_WORKSPACE, {name: 'Duplicate', policyID: TARGET_POLICY_ID});
@@ -149,6 +150,51 @@ describe('WorkspaceDuplicateSelectFeaturesForm Rules and Merchant rules', () => 
         await Onyx.clear();
         await waitForBatchedUpdates();
         jest.clearAllMocks();
+    });
+
+    it('hides Rules and Merchant rules when the source feature is disabled despite retained settings', async () => {
+        // Given a Rules-off Control source with stored workspace and merchant rules
+        await renderForm(true, {areRulesEnabled: false, glCodes: true});
+
+        // When the admin continues from the feature selection step
+        pressContinue();
+
+        // Then disabled Rules cannot be copied through either row
+        expect(getRow('rules')).toBeUndefined();
+        expect(getRow('codingRules')).toBeUndefined();
+        expect(getSentParts()).toMatchObject({expenses: false, codingRules: false});
+    });
+
+    it('keeps Rules available on a migrated Control source with category rules', async () => {
+        // Given a legacy Control source whose category rules determine feature availability
+        await Onyx.set(`${ONYXKEYS.COLLECTION.POLICY_CATEGORIES}${POLICY_ID}`, {
+            Travel: {name: 'Travel', enabled: true, areCommentsRequired: true},
+        });
+        await renderForm(false, {areRulesEnabled: undefined});
+
+        // When the admin continues with the default selected features
+        pressContinue();
+
+        // Then the source's existing category rules are still offered and copied
+        expect(getRow('rules')?.isSelected).toBe(true);
+        expect(getSentParts()).toMatchObject({expenses: true});
+    });
+
+    it('does not offer disabled Workflows merely because its configuration remains', async () => {
+        // Given disabled Workflows with retained submission, approval, and payment settings
+        await renderForm(true, {
+            areWorkflowsEnabled: false,
+            autoReportingFrequency: CONST.POLICY.AUTO_REPORTING_FREQUENCIES.WEEKLY,
+            approvalMode: CONST.POLICY.APPROVAL_MODE.BASIC,
+            reimbursementChoice: CONST.POLICY.REIMBURSEMENT_CHOICES.REIMBURSEMENT_YES,
+        });
+
+        // When the admin continues with the available default selections
+        pressContinue();
+
+        // Then stale workflow settings cannot become a selected feature or enable it on the duplicate
+        expect(getRow('workflows')).toBeUndefined();
+        expect(getSentParts()).toMatchObject({exportLayouts: false});
     });
 
     it('deselects Merchant rules when Rules is deselected, so neither is copied', async () => {

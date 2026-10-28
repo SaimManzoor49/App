@@ -396,6 +396,9 @@ describe('actions/Policy', () => {
                 ...createRandomPolicy(10, CONST.POLICY.TYPE.PERSONAL),
                 employeeList: {},
                 areInvoicesEnabled: true,
+                areWorkflowsEnabled: true,
+                areDistanceRatesEnabled: true,
+                arePerDiemRatesEnabled: true,
                 invoice: {
                     companyName: 'Source company',
                     companyWebsite: 'https://source.company',
@@ -655,6 +658,7 @@ describe('actions/Policy', () => {
                 outputCurrency: 'EUR',
                 address: {addressStreet: '1 Main Street', city: 'Paris', country: 'FR', state: '', zipCode: '75001'},
                 isTravelEnabled: true,
+                areRulesEnabled: true,
                 tax: {trackingEnabled: true},
             };
             const sourceRule: Rule = {
@@ -988,6 +992,7 @@ describe('actions/Policy', () => {
             const sourceExtraRateID = 'srcExtraRate';
             const fakePolicy: PolicyType = {
                 ...createRandomPolicy(19, CONST.POLICY.TYPE.TEAM),
+                areDistanceRatesEnabled: true,
                 customUnits: {
                     [sourceDistanceUnitID]: {
                         customUnitID: sourceDistanceUnitID,

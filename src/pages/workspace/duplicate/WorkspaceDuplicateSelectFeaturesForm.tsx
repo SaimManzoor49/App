@@ -19,7 +19,15 @@ import useThemeStyles from '@hooks/useThemeStyles';
 
 import {getExpenseDefaultRuleCount} from '@libs/ExpenseDefaultRuleUtils';
 import {readFileAsync} from '@libs/fileDownload/FileUtils';
-import {createFilteredMemberCountSelector, createInvoiceConfigurationTextSelector, getDistanceRateCustomUnit, getPerDiemCustomUnit, isCollectPolicy} from '@libs/PolicyUtils';
+import {
+    arePolicyRulesEnabled,
+    createFilteredMemberCountSelector,
+    createInvoiceConfigurationTextSelector,
+    getDistanceRateCustomUnit,
+    getPerDiemCustomUnit,
+    isCollectPolicy,
+} from '@libs/PolicyUtils';
+import {isDuplicateWorkspaceFeatureEnabled} from '@libs/PolicyUtils/duplicateFeatures';
 import {formatAddressToString} from '@libs/ReportActionsUtils';
 import {getReportFieldsByPolicyID} from '@libs/ReportUtils';
 
@@ -55,6 +63,7 @@ function WorkspaceDuplicateSelectFeaturesForm({policyID}: WorkspaceDuplicateForm
     const [policyTags] = useOnyx(`${ONYXKEYS.COLLECTION.POLICY_TAGS}${policyID}`);
     const taxesLength = Object.values(policy?.taxRates?.taxes ?? {}).filter((tax) => tax.pendingAction !== CONST.RED_BRICK_ROAD_PENDING_ACTION.DELETE).length ?? 0;
     const [policyCategories] = useOnyx(`${ONYXKEYS.COLLECTION.POLICY_CATEGORIES}${policyID}`);
+    const areRulesEnabled = arePolicyRulesEnabled(policy, policyCategories);
     const categoriesCount = Object.values(policyCategories ?? {}).filter((category) => category.pendingAction !== CONST.RED_BRICK_ROAD_PENDING_ACTION.DELETE).length;
     const codingRulesCount = getExpenseDefaultRuleCount(allRules, policy?.id);
     const [selectedItems, setSelectedItems] = useState<string[]>([]);
@@ -91,7 +100,7 @@ function WorkspaceDuplicateSelectFeaturesForm({policyID}: WorkspaceDuplicateForm
     const formattedAddress = !isEmptyObject(policy) && !isEmptyObject(policy.address) ? formatAddressToString(policy.address) : '';
 
     const items = (() => {
-        const rules = getWorkspaceRules(policy, translate);
+        const rules = getWorkspaceRules(policy, translate, policyCategories);
         const workflows = getWorkflowRules(policy, translate);
 
         const result = [
@@ -158,7 +167,7 @@ function WorkspaceDuplicateSelectFeaturesForm({policyID}: WorkspaceDuplicateForm
                           : undefined,
                   }
                 : undefined,
-            codingRulesCount > 0 && !isCollect
+            areRulesEnabled && codingRulesCount > 0 && !isCollect
                 ? {
                       translation: translate('workspace.duplicateWorkspace.merchantRules'),
                       value: 'codingRules',
@@ -195,12 +204,13 @@ function WorkspaceDuplicateSelectFeaturesForm({policyID}: WorkspaceDuplicateForm
                 : undefined,
         ];
 
-        return result.filter((item): item is NonNullable<typeof item> => !!item);
+        return result.filter((item): item is NonNullable<typeof item> => !!item && isDuplicateWorkspaceFeatureEnabled(policy, item.value, policyCategories));
     })();
 
     // Merchant rules live under Rules, so they are copied only along with it. The Rules row is hidden when the source has no workspace-level rules, and merchant rules can then be copied on their own.
     const hasRulesItem = items.some((item) => item.value === 'rules');
-    const effectiveSelectedItems = hasRulesItem && !selectedItems.includes('rules') ? selectedItems.filter((value) => value !== 'codingRules') : selectedItems;
+    const visibleSelectedItems = selectedItems.filter((value) => items.some((item) => item.value === value));
+    const effectiveSelectedItems = hasRulesItem && !visibleSelectedItems.includes('rules') ? visibleSelectedItems.filter((value) => value !== 'codingRules') : visibleSelectedItems;
 
     const featuresToCopy: ListItem[] = items.map((option) => {
         const alternateText = option?.alternateText ? option.alternateText.trim().replaceAll(/,$/g, '') : undefined;
@@ -231,7 +241,7 @@ function WorkspaceDuplicateSelectFeaturesForm({policyID}: WorkspaceDuplicateForm
             policyID: policy.id,
             targetPolicyID: duplicateWorkspace.policyID,
             welcomeNote: `${translate('workspace.duplicateWorkspace.welcomeNote')} ${duplicateWorkspace.name}`,
-            policyCategories: effectiveSelectedItems.includes('categories') ? policyCategories : undefined,
+            policyCategories,
             personalDetailsByLogins: employeePersonalDetails,
             parts: {
                 people: effectiveSelectedItems.includes('members'),
